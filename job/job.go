@@ -9,15 +9,15 @@ type Priority int
 type Status int
 
 const (
-	high Priority = iota
-	normal
-	low
+	High Priority = iota
+	Normal
+	Low
 )
 const (
-	pending Status = iota
-	inFlight
-	succeeded
-	failed
+	Pending Status = iota
+	InFlight
+	Succeeded
+	Failed
 )
 
 type Job struct {
