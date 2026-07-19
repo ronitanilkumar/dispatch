@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"github.com/ronitanilkumar/dispatch/job"
 	"sync"
+	"errors"
 )
 
 type PriorityQueue []*job.Job
@@ -45,6 +46,7 @@ type Queue struct {
 	mu		sync.Mutex
 	cond 	*sync.Cond
 	pq		PriorityQueue
+	closed  bool
 }
 
 func NewQueue() *Queue {
@@ -53,23 +55,40 @@ func NewQueue() *Queue {
 	return q
 }
 
-func (q *Queue) Dequeue() *job.Job {
+func (q *Queue) Dequeue() (*job.Job, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	for len(q.pq) == 0 {
+	for len(q.pq) == 0 && !q.closed {
 		q.cond.Wait()
+	}
+
+	if len(q.pq) == 0 {
+		return nil, false
 	}
 
 	j := heap.Pop(&q.pq).(*job.Job)
 	
-	return j
+	return j, true
 }
 
-func (q *Queue) Enqueue(j *job.Job) {
+func (q *Queue) Enqueue(j *job.Job) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if q.closed {
+		return errors.New("queue is closed")
+	}
+
 	heap.Push(&q.pq, j)
 	q.cond.Signal()
+	return nil
+}
+
+func (q *Queue) Close() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	
+	q.closed = true
+	q.cond.Broadcast()
 }
