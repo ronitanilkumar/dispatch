@@ -1,24 +1,28 @@
 package worker
 
 import (
+	"context"
+	"github.com/ronitanilkumar/dispatch/delivery"
 	"github.com/ronitanilkumar/dispatch/queue"
 	"sync"
-	"context"
+	"log"
 )
 
 type Pool struct {
-	qRef	   *queue.Queue
-	numWorkers int
-	wg		   sync.WaitGroup
-	done       chan struct{}
-	stopOnce   sync.Once
+	qRef           *queue.Queue
+	deliveryClient *delivery.Client
+	numWorkers     int
+	wg             sync.WaitGroup
+	done           chan struct{}
+	stopOnce       sync.Once
 }
 
-func NewPool(q *queue.Queue, numWorkers int) *Pool {
+func NewPool(q *queue.Queue, d *delivery.Client, numWorkers int) *Pool {
 	return &Pool{
-		qRef:		q,
-		numWorkers: numWorkers,
-		done:       make(chan struct{}),
+		qRef:           q,
+		deliveryClient: d,
+		numWorkers:     numWorkers,
+		done:           make(chan struct{}),
 	}
 }
 
@@ -33,6 +37,16 @@ func (p *Pool) worker() {
 		job, ok := p.qRef.Dequeue()
 		if !ok {
 			break
+		}
+
+		deliverCtx := context.Background()
+		shouldRetry, err := p.deliveryClient.Deliver(deliverCtx, job)
+		if err != nil {
+			if shouldRetry {
+				log.Printf("job %d delivery failed (retryable): %v", job.Id, err)
+			} else {
+				log.Printf("job %d delivery failed (not retryable): %v", job.Id, err)
+			}
 		}
 	}
 }
