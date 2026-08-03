@@ -43,9 +43,9 @@ func (p *Pool) worker() {
 		shouldRetry, err := p.deliveryClient.Deliver(deliverCtx, job)
 		if err != nil {
 			if shouldRetry {
-				log.Printf("job %d delivery failed (retryable): %v", job.Id, err)
+				log.Printf("job %d delivery failed (retryable): %v", job.ID, err)
 			} else {
-				log.Printf("job %d delivery failed (not retryable): %v", job.Id, err)
+				log.Printf("job %d delivery failed (not retryable): %v", job.ID, err)
 			}
 		}
 	}

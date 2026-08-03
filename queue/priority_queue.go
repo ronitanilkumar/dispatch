@@ -9,6 +9,8 @@ import (
 
 type PriorityQueue []*job.Job
 
+var ErrClosed error = errors.New("queue is closed")
+
 func (pq PriorityQueue) Len() int { return len(pq) }
 
 func (pq PriorityQueue) Less(i, j int) bool {
@@ -77,7 +79,7 @@ func (q *Queue) Enqueue(j *job.Job) error {
 	defer q.mu.Unlock()
 
 	if q.closed {
-		return errors.New("queue is closed")
+		return ErrClosed
 	}
 
 	heap.Push(&q.pq, j)
