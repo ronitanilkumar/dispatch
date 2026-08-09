@@ -31,6 +31,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /jobs", handler.SubmitJobHandler)
+	mux.HandleFunc("DELETE /jobs/{id}", handler.CancelJobHandler)
 
 	server := &http.Server{
 		Addr:    ":8080",

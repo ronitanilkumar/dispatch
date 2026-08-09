@@ -10,6 +10,7 @@ import (
 type PriorityQueue []*job.Job
 
 var ErrClosed error = errors.New("queue is closed")
+var ErrJobNotFound error = errors.New("job cancellation failed")
 
 func (pq PriorityQueue) Len() int { return len(pq) }
 
@@ -45,15 +46,17 @@ func (pq *PriorityQueue) Pop() any {
 
 // Mutex, thread-safe wrapper
 type Queue struct {
-	mu		sync.Mutex
-	cond 	*sync.Cond
-	pq		PriorityQueue
-	closed  bool
+	mu		   sync.Mutex
+	cond 	   *sync.Cond
+	pq		   PriorityQueue
+	closed     bool
+	jobsByID   map[int64]*job.Job
 }
 
 func NewQueue() *Queue {
 	q := &Queue{}
 	q.cond = sync.NewCond(&q.mu)
+	q.jobsByID = make(map[int64]*job.Job)
 	return q
 }
 
@@ -70,6 +73,7 @@ func (q *Queue) Dequeue() (*job.Job, bool) {
 	}
 
 	j := heap.Pop(&q.pq).(*job.Job)
+	delete(q.jobsByID, j.ID)
 	
 	return j, true
 }
@@ -83,6 +87,7 @@ func (q *Queue) Enqueue(j *job.Job) error {
 	}
 
 	heap.Push(&q.pq, j)
+	q.jobsByID[j.ID] = j
 	q.cond.Signal()
 	return nil
 }
@@ -93,4 +98,18 @@ func (q *Queue) Close() {
 	
 	q.closed = true
 	q.cond.Broadcast()
+}
+
+func (q *Queue) Cancel(id int64) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	j, ok := q.jobsByID[id]
+	if !ok {
+		return ErrJobNotFound
+	}
+
+	heap.Remove(&q.pq, j.Index)
+	delete(q.jobsByID, id)
+	return nil
 }

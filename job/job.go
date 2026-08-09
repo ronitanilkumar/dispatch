@@ -23,7 +23,7 @@ const (
 )
 
 type Job struct {
-	ID       int64
+	ID        int64
 	Priority  Priority
 	CreatedAt time.Time
 	URL       string

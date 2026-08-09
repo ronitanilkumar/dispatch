@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/ronitanilkumar/dispatch/job"
@@ -187,4 +188,29 @@ func validateSubmitJobRequest(req SubmitJobRequest) error {
 	}
 
 	return nil
+}
+
+func (h *Handler) CancelJobHandler(w http.ResponseWriter, r *http.Request) {
+	 strID := r.PathValue("id")
+	 id, err := strconv.ParseInt(strID, 10, 64)
+
+	 if err != nil {
+		http.Error(w, "job ID must be a valid integer", http.StatusBadRequest)
+		return
+	 }
+
+	 cancelErr := h.qRef.Cancel(id)
+
+	 if cancelErr != nil {
+		if errors.Is(cancelErr, queue.ErrJobNotFound) {
+			http.Error(w, "unable to cancel job at this time", http.StatusNotFound)
+			return
+		}
+
+		log.Printf("ERROR: job cancellation failed: %v", cancelErr)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	 }
+
+	 w.WriteHeader(http.StatusNoContent)
 }
