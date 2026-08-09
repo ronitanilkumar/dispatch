@@ -13,8 +13,6 @@ type Pool struct {
 	deliveryClient *delivery.Client
 	numWorkers     int
 	wg             sync.WaitGroup
-	done           chan struct{}
-	stopOnce       sync.Once
 }
 
 func NewPool(q *queue.Queue, d *delivery.Client, numWorkers int) *Pool {
@@ -22,13 +20,7 @@ func NewPool(q *queue.Queue, d *delivery.Client, numWorkers int) *Pool {
 		qRef:           q,
 		deliveryClient: d,
 		numWorkers:     numWorkers,
-		done:           make(chan struct{}),
 	}
-}
-
-func (p *Pool) watchContext(ctx context.Context) {
-	<-ctx.Done()
-	p.Stop()
 }
 
 func (p *Pool) worker() {
@@ -51,19 +43,14 @@ func (p *Pool) worker() {
 	}
 }
 
-func (p *Pool) Start(ctx context.Context) {
+func (p *Pool) Start() {
 	for i := 0; i < p.numWorkers; i++ {
 		p.wg.Add(1)
 		go p.worker()
 	}
-
-	go p.watchContext(ctx)
 }
 
 func (p *Pool) Stop() {
 	p.qRef.Close()
 	p.wg.Wait()
-	p.stopOnce.Do(func() {
-		close(p.done)
-	})
 }
