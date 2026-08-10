@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ronitanilkumar/dispatch/api/dedup"
 	"github.com/ronitanilkumar/dispatch/job"
 	"github.com/ronitanilkumar/dispatch/queue"
 )
@@ -19,12 +20,14 @@ import (
 const maxByteSize int64 = 1024 * 1024
 
 type Handler struct {
-	qRef *queue.Queue
+	qRef       *queue.Queue
+	dedupCache *dedup.DedupCache
 }
 
-func NewHandler(q *queue.Queue) *Handler {
+func NewHandler(q *queue.Queue, dedupCache *dedup.DedupCache) *Handler {
 	return &Handler{
-		qRef: q,
+		qRef:       q,
+		dedupCache: dedupCache,
 	}
 }
 
@@ -32,6 +35,7 @@ type SubmitJobRequest struct {
 	Payload  json.RawMessage `json:"payload"`
 	Priority *job.Priority   `json:"priority"`
 	URL      string          `json:"url"`
+	Key      string          `json:"idemKey"`
 }
 
 type SubmitJobResponse struct {
@@ -122,6 +126,11 @@ func (h *Handler) SubmitJobHandler(w http.ResponseWriter, r *http.Request) {
 		priority = *req.Priority
 	}
 
+	if isDuplicate := h.dedupCache.CheckAndRecord(req.Key); isDuplicate {
+		http.Error(w, "duplicate request: this job was already submitted recently", http.StatusConflict)
+		return
+	}
+
 	newJob := job.NewJob(
 		req.Payload,
 		priority,
@@ -135,7 +144,7 @@ func (h *Handler) SubmitJobHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "service unavailable: queue is closed", http.StatusServiceUnavailable)
 			return
 		}
-		
+
 		log.Printf("ERROR: queue push failed: %v", queueErr)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -187,21 +196,26 @@ func validateSubmitJobRequest(req SubmitJobRequest) error {
 		return errors.New("payload must not be empty, null, or nil")
 	}
 
+	// Job Idempotency Key Validation
+	if strings.TrimSpace(req.Key) == "" {
+		return errors.New("idemKey must not be empty")
+	}
+
 	return nil
 }
 
 func (h *Handler) CancelJobHandler(w http.ResponseWriter, r *http.Request) {
-	 strID := r.PathValue("id")
-	 id, err := strconv.ParseInt(strID, 10, 64)
+	strID := r.PathValue("id")
+	id, err := strconv.ParseInt(strID, 10, 64)
 
-	 if err != nil {
+	if err != nil {
 		http.Error(w, "job ID must be a valid integer", http.StatusBadRequest)
 		return
-	 }
+	}
 
-	 cancelErr := h.qRef.Cancel(id)
+	cancelErr := h.qRef.Cancel(id)
 
-	 if cancelErr != nil {
+	if cancelErr != nil {
 		if errors.Is(cancelErr, queue.ErrJobNotFound) {
 			http.Error(w, "unable to cancel job at this time", http.StatusNotFound)
 			return
@@ -210,7 +224,7 @@ func (h *Handler) CancelJobHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("ERROR: job cancellation failed: %v", cancelErr)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
-	 }
+	}
 
-	 w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusNoContent)
 }

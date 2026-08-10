@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ronitanilkumar/dispatch/api"
+	"github.com/ronitanilkumar/dispatch/api/dedup"
 	"github.com/ronitanilkumar/dispatch/delivery"
 	"github.com/ronitanilkumar/dispatch/queue"
 	"github.com/ronitanilkumar/dispatch/worker"
@@ -17,6 +18,8 @@ import (
 const numWorkers = 16
 const deliveryTimeout = 5 * time.Second
 const shutdownTimeout = 5 * time.Second
+const ttl = 5 * time.Minute
+const sweepInterval = 2 * time.Minute
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -25,7 +28,9 @@ func main() {
 	q := queue.NewQueue()
 	client := delivery.NewClient(deliveryTimeout)
 	pool := worker.NewPool(q, client, numWorkers)
-	handler := api.NewHandler(q)
+	dedupCache := dedup.NewDedupCache(ttl)
+	go dedupCache.StartSweeper(sweepInterval)
+	handler := api.NewHandler(q, dedupCache)
 
 	pool.Start()
 
