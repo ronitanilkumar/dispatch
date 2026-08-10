@@ -30,6 +30,7 @@ type Job struct {
 	Payload   json.RawMessage
 	Status    Status
 	Index     int
+	Attempts  int
 }
 
 var nextID atomic.Int64

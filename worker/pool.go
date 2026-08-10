@@ -2,11 +2,19 @@ package worker
 
 import (
 	"context"
+	"log"
+	"math/rand"
+	"sync"
+	"time"
+
 	"github.com/ronitanilkumar/dispatch/delivery"
 	"github.com/ronitanilkumar/dispatch/queue"
-	"sync"
-	"log"
+	"github.com/ronitanilkumar/dispatch/job"
 )
+
+const maxAttempts = 5
+const baseDelay = 500 * time.Millisecond
+const maxDelay = 30 * time.Second
 
 type Pool struct {
 	qRef           *queue.Queue
@@ -26,19 +34,35 @@ func NewPool(q *queue.Queue, d *delivery.Client, numWorkers int) *Pool {
 func (p *Pool) worker() {
 	defer p.wg.Done()
 	for {
-		job, ok := p.qRef.Dequeue()
+		j, ok := p.qRef.Dequeue()
 		if !ok {
 			break
 		}
+		j.Status = job.InFlight
 
 		deliverCtx := context.Background()
-		shouldRetry, err := p.deliveryClient.Deliver(deliverCtx, job)
+		shouldRetry, err := p.deliveryClient.Deliver(deliverCtx, j)
 		if err != nil {
 			if shouldRetry {
-				log.Printf("job %d delivery failed (retryable): %v", job.ID, err)
+				j.Attempts++
+				if j.Attempts >= maxAttempts {
+					j.Status = job.Failed
+					log.Printf("job %d exhausted %d attempts, giving up: %v", j.ID, j.Attempts, err)
+					continue
+				}
+				p.wg.Add(1)
+				time.AfterFunc(backoff(j.Attempts), func() {
+					defer p.wg.Done()
+					if err := p.qRef.Enqueue(j); err != nil {
+						log.Printf("job %d dropped, queue closed during backoff (attempt %d)", j.ID, j.Attempts)
+					}
+				})
 			} else {
-				log.Printf("job %d delivery failed (not retryable): %v", job.ID, err)
+				j.Status = job.Failed
+				log.Printf("job %d delivery failed (not retryable): %v", j.ID, err)
 			}
+		} else {
+			j.Status = job.Succeeded
 		}
 	}
 }
@@ -53,4 +77,10 @@ func (p *Pool) Start() {
 func (p *Pool) Stop() {
 	p.qRef.Close()
 	p.wg.Wait()
+}
+
+func backoff(attempts int) time.Duration {
+	d := min(baseDelay << (attempts - 1), maxDelay)
+	jitter := time.Duration(rand.Int63n(int64(d) / 2))
+	return d/2 + jitter
 }
