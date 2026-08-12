@@ -12,6 +12,7 @@ import (
 	"github.com/ronitanilkumar/dispatch/api/dedup"
 	"github.com/ronitanilkumar/dispatch/delivery"
 	"github.com/ronitanilkumar/dispatch/queue"
+	"github.com/ronitanilkumar/dispatch/ratelimit"
 	"github.com/ronitanilkumar/dispatch/worker"
 )
 
@@ -20,13 +21,16 @@ const deliveryTimeout = 5 * time.Second
 const shutdownTimeout = 5 * time.Second
 const ttl = 5 * time.Minute
 const sweepInterval = 2 * time.Minute
+const maxTokens = 50.0
+const refillRate = 10.0
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
 	q := queue.NewQueue()
-	client := delivery.NewClient(deliveryTimeout)
+	l := ratelimit.NewLimiter(maxTokens, refillRate)
+	client := delivery.NewClient(deliveryTimeout, l)
 	pool := worker.NewPool(q, client, numWorkers)
 	dedupCache := dedup.NewDedupCache(ttl)
 	go dedupCache.StartSweeper(sweepInterval)

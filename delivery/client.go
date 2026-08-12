@@ -4,23 +4,37 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net/http"
-	"time"
-	"github.com/ronitanilkumar/dispatch/job"
 	"io"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/ronitanilkumar/dispatch/job"
+	"github.com/ronitanilkumar/dispatch/ratelimit"
 )
 
 type Client struct {
 	httpClient *http.Client
+	limiter    *ratelimit.Limiter
 }
 
-func NewClient(timeout time.Duration) *Client {
+func NewClient(timeout time.Duration, limiter *ratelimit.Limiter) *Client {
 	return &Client{
 		httpClient: &http.Client{Timeout: timeout},
+		limiter: limiter,
 	}
 }
 
 func (c *Client) Deliver(ctx context.Context, j *job.Job) (shouldRetry bool, err error) {
+	parsedURL, err := url.ParseRequestURI(j.URL)
+
+	if err != nil {
+		return false, fmt.Errorf("invalid job URL: %w", err)
+	}
+	if !c.limiter.Allow(parsedURL.Host) {
+		return true, fmt.Errorf("rate limited: too many requests to %s", parsedURL.Host)
+	}
+	
 	reader := bytes.NewReader(j.Payload)
 	
 	req, err := http.NewRequestWithContext(
