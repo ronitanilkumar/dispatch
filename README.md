@@ -4,6 +4,8 @@ A concurrent webhook delivery engine in Go.
 
 Dispatch accepts webhook jobs over HTTP (target URL, JSON payload, priority), queues them, and delivers them through a pool of worker goroutines. It handles retries with exponential backoff, per-destination rate limiting, request deduplication, job cancellation, and full request tracing. There's also a load benchmark suite and a live dashboard for watching jobs move through the system.
 
+![Dispatch dashboard](docs/Dispatch_Demo.png)
+
 ## Why
 
 Webhook delivery at scale runs into the same problems every time: bursty traffic, slow or flaky destinations, the need to prioritize some jobs over others, and the requirement that the system degrade gracefully instead of falling over. Dispatch exists to build and demonstrate the concurrency and systems-design patterns that solve this: priority queues under contention, safe goroutine lifecycle management, backoff and retry, per-destination rate limiting, and distributed tracing across goroutine boundaries.

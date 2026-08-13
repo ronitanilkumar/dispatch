@@ -6,3 +6,6 @@ dashboard/node_modules/
 # Go build output
 /dispatch
 /flakyreceiver
+
+# macOS
+.DS_Store
