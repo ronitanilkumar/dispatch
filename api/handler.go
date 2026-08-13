@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,13 +16,23 @@ import (
 	"github.com/ronitanilkumar/dispatch/api/dedup"
 	"github.com/ronitanilkumar/dispatch/job"
 	"github.com/ronitanilkumar/dispatch/queue"
+	"github.com/ronitanilkumar/dispatch/telemetry"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const maxByteSize int64 = 1024 * 1024
 
+// Submissions receives newly accepted jobs for observability. Optional: a nil
+// value leaves submission behavior unchanged.
+type Submissions interface {
+	JobSubmitted(j *job.Job)
+}
+
 type Handler struct {
 	qRef       *queue.Queue
 	dedupCache *dedup.DedupCache
+	obs        Submissions
 }
 
 func NewHandler(q *queue.Queue, dedupCache *dedup.DedupCache) *Handler {
@@ -29,6 +40,12 @@ func NewHandler(q *queue.Queue, dedupCache *dedup.DedupCache) *Handler {
 		qRef:       q,
 		dedupCache: dedupCache,
 	}
+}
+
+// WithObserver attaches a Submissions observer and returns the handler.
+func (h *Handler) WithObserver(o Submissions) *Handler {
+	h.obs = o
+	return h
 }
 
 type SubmitJobRequest struct {
@@ -43,6 +60,9 @@ type SubmitJobResponse struct {
 }
 
 func (h *Handler) SubmitJobHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, span := telemetry.Tracer().Start(r.Context(), "job.submit", trace.WithSpanKind(trace.SpanKindServer))
+	defer span.End()
+
 	var req SubmitJobRequest
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxByteSize)
@@ -137,7 +157,29 @@ func (h *Handler) SubmitJobHandler(w http.ResponseWriter, r *http.Request) {
 		strings.TrimSpace(req.URL),
 	)
 
-	queueErr := h.qRef.Enqueue(newJob)
+	destHost := ""
+	if jobURL, err := url.ParseRequestURI(newJob.URL); err == nil {
+		destHost = jobURL.Host
+	}
+
+	span.SetAttributes(
+		telemetry.AttrJobID.Int64(newJob.ID),
+		telemetry.AttrPriority.Int(int(newJob.Priority)),
+		telemetry.AttrHost.String(destHost),
+	)
+
+	// Recorded before Enqueue: once the job is in the queue a worker may
+	// dequeue it immediately, and it must already carry the trace context.
+	newJob.SpanCtx = trace.SpanContextFromContext(ctx)
+
+	// Recorded before Enqueue for the same reason as SpanCtx: a worker can pick
+	// the job up immediately, and reporting the submission afterwards could
+	// land after the worker has already reported it in-flight.
+	if h.obs != nil {
+		h.obs.JobSubmitted(newJob)
+	}
+
+	queueErr := h.enqueue(ctx, newJob, destHost)
 
 	if queueErr != nil {
 		if errors.Is(queueErr, queue.ErrClosed) {
@@ -160,6 +202,27 @@ func (h *Handler) SubmitJobHandler(w http.ResponseWriter, r *http.Request) {
 	if encodeErr := json.NewEncoder(w).Encode(response); encodeErr != nil {
 		log.Printf("ERROR: failed to encode success response: %v", encodeErr)
 	}
+}
+
+// enqueue wraps the queue push in its own span so the time a submission spends
+// waiting on the queue lock is visible on the trace.
+func (h *Handler) enqueue(ctx context.Context, j *job.Job, destHost string) error {
+	_, span := telemetry.Tracer().Start(ctx, "job.enqueue", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+
+	span.SetAttributes(
+		telemetry.AttrJobID.Int64(j.ID),
+		telemetry.AttrPriority.Int(int(j.Priority)),
+		telemetry.AttrHost.String(destHost),
+	)
+
+	if err := h.qRef.Enqueue(j); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "enqueue failed")
+		return err
+	}
+
+	return nil
 }
 
 func validateSubmitJobRequest(req SubmitJobRequest) error {

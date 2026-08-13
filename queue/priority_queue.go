@@ -92,6 +92,14 @@ func (q *Queue) Enqueue(j *job.Job) error {
 	return nil
 }
 
+// Depth reports the number of jobs currently waiting to be dequeued.
+func (q *Queue) Depth() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	return len(q.pq)
+}
+
 func (q *Queue) Close() {
 	q.mu.Lock()
 	defer q.mu.Unlock()

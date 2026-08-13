@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Priority int
@@ -31,6 +33,7 @@ type Job struct {
 	Status    Status
 	Index     int
 	Attempts  int
+	SpanCtx trace.SpanContext
 }
 
 var nextID atomic.Int64

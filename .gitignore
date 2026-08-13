@@ -1,0 +1,8 @@
+# Node / dashboard
+node_modules/
+dashboard/dist/
+dashboard/node_modules/
+
+# Go build output
+/dispatch
+/flakyreceiver

@@ -11,6 +11,9 @@ import (
 
 	"github.com/ronitanilkumar/dispatch/job"
 	"github.com/ronitanilkumar/dispatch/ratelimit"
+	"github.com/ronitanilkumar/dispatch/telemetry"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Client struct {
@@ -26,15 +29,36 @@ func NewClient(timeout time.Duration, limiter *ratelimit.Limiter) *Client {
 }
 
 func (c *Client) Deliver(ctx context.Context, j *job.Job) (shouldRetry bool, err error) {
+	// One span per attempt, not one per job: the backoff wait between attempts
+	// is deliberately left outside any span so it shows as a gap on the trace.
+	ctx, span := telemetry.Tracer().Start(ctx, "job.deliver", trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
+
+	span.SetAttributes(
+		telemetry.AttrJobID.Int64(j.ID),
+		telemetry.AttrPriority.Int(int(j.Priority)),
+		telemetry.AttrAttempt.Int(j.Attempts+1),
+	)
+
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+
 	parsedURL, err := url.ParseRequestURI(j.URL)
 
 	if err != nil {
 		return false, fmt.Errorf("invalid job URL: %w", err)
 	}
+
+	span.SetAttributes(telemetry.AttrHost.String(parsedURL.Host))
+
 	if !c.limiter.Allow(parsedURL.Host) {
 		return true, fmt.Errorf("rate limited: too many requests to %s", parsedURL.Host)
 	}
-	
+
 	reader := bytes.NewReader(j.Payload)
 	
 	req, err := http.NewRequestWithContext(
@@ -59,6 +83,8 @@ func (c *Client) Deliver(ctx context.Context, j *job.Job) (shouldRetry bool, err
 
 	io.Copy(io.Discard, resp.Body)
 	defer resp.Body.Close()
+
+	span.SetAttributes(telemetry.AttrStatusCode.Int(resp.StatusCode))
 
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 		shouldRetry = true
